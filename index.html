@@ -11,6 +11,7 @@
   input,select,button{width:100%;box-sizing:border-box;font-size:16px;padding:11px;margin:0 0 8px;border:1px solid #bbb;border-radius:8px;background:#fff}
   button{background:#fff;color:#1a56db;border:1px solid #1a56db;font-weight:600}
   label.b{display:block;text-align:center;background:#1a56db;color:#fff;border-radius:8px;padding:18px;font-size:22px;font-weight:600;margin-bottom:8px}
+  label.b.off{background:#9aa5b5}
   #msg{padding:8px 0;font-size:14px;color:#444;min-height:20px}
   .it{background:#fff;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:13px;word-break:break-all}
   .ok{color:#0a7a2f}.no{color:#c0392b}
@@ -19,6 +20,25 @@
   .r{background:#fff;border:1px solid #bbb;border-radius:8px;padding:10px;margin-bottom:6px;font-size:15px}
   .r:active{background:#e8f0fe}
   #res{margin-bottom:8px}
+
+  /* ---- Khung chụp 4 góc ---- */
+  #views{display:none;margin-bottom:8px}
+  #views.show{display:block}
+  #vhead{font-size:13px;color:#555;margin:0 0 6px}
+  #vgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+  .v{background:#fff;border:2px solid #bbb;border-radius:10px;padding:8px 10px;cursor:pointer;position:relative;min-height:64px}
+  .v b{display:block;font-size:15px}
+  .v small{display:block;font-size:12px;color:#555}
+  .v.sel{border-color:#1a56db;background:#e8f0fe}
+  .v.done{border-color:#0a7a2f}
+  .v.rej{border-color:#c0392b}
+  .v .cnt{position:absolute;top:6px;right:8px;font-size:12px;font-weight:700;border-radius:10px;padding:1px 8px;background:#e5e7eb;color:#333}
+  .v.done .cnt{background:#0a7a2f;color:#fff}
+  .v.rej .cnt{background:#c0392b;color:#fff}
+  #rs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  #rs button{margin:0;padding:12px}
+  #rs button.on.acc{background:#0a7a2f;border-color:#0a7a2f;color:#fff}
+  #rs button.on.rej{background:#c0392b;border-color:#c0392b;color:#fff}
 </style>
 </head>
 <body>
@@ -37,9 +57,20 @@
 <select id="style"><option value="">-- Chọn Style --</option></select>
 <select id="po"><option value="">-- Chọn PO / Ngày giao --</option></select>
 <select id="cat"></select>
+
+<!-- Chỉ hiện khi chọn FP / PI / IN / FI / GT -->
+<div id="views">
+  <div id="vhead"></div>
+  <div id="vgrid"></div>
+  <div id="rs">
+    <button type="button" id="bacc" class="acc">Accepted</button>
+    <button type="button" id="brej" class="rej">Rejected</button>
+  </div>
+</div>
+
 <input id="note" placeholder="Ghi chú (lỗi, vị trí...)">
 
-<label class="b" for="file">CHỤP ẢNH</label>
+<label class="b" for="file" id="shoot">CHỤP ẢNH</label>
 <input id="file" type="file" accept="image/*" capture="environment" hidden>
 
 <button id="resend">Gửi lại ảnh chờ / cập nhật danh sách đơn</button>
@@ -71,16 +102,27 @@ const CATS = [
   'Mois',
   'Hangtag',
   'Sticker',
+  'FP',
   'PI',
   'IN',
   'FI',
   'GT'
+];
+// 5 mục chụp theo 4 góc nhìn. Mã ảnh = tên mục + số (GT1, GT2, GT3, GT4...)
+// Số khớp với form báo cáo: Front = 1, Left = 2, Back = 3, Right = 4
+const VIEW_CATS = ['FP', 'PI', 'IN', 'FI', 'GT'];
+const VIEWS = [
+  {key: 'Front', label: 'Front View', n: 1},
+  {key: 'Back',  label: 'Back View',  n: 3},
+  {key: 'Left',  label: 'Left View',  n: 2},
+  {key: 'Right', label: 'Right View', n: 4}
 ];
 // ========================================================
 const $ = id => document.getElementById(id);
 const msg = t => $('msg').textContent = t;
 const two = n => String(n).padStart(2, '0');
 const clean = s => String(s).replace(/[^A-Za-z0-9-]/g, '');
+const isView = c => VIEW_CATS.includes(c);
 
 CATS.forEach(c => $('cat').add(new Option(c, c)));
 FCA_LIST.forEach(n => $('fca').add(new Option(n, n)));
@@ -88,6 +130,8 @@ FCA_LIST.forEach(n => $('fca').add(new Option(n, n)));
   $(id).value = localStorage.getItem(id) || '';
   $(id).onchange = () => { localStorage.setItem(id, $(id).value); if (id === 'tok') loadOrders(); };
 });
+$('cat').value = localStorage.getItem('cat') || CATS[0];
+if (!$('cat').value) $('cat').value = CATS[0];
 
 // ---- Hàng chờ gửi (IndexedDB): ảnh không bị mất khi mất mạng ----
 const db = new Promise((res, rej) => {
@@ -109,7 +153,7 @@ const tx = async (mode, fn) => {
 // ---- Danh sách đơn từ sheet Order ----
 let orders = JSON.parse(localStorage.getItem('orders') || '[]');
 let log = JSON.parse(localStorage.getItem('log') || '[]');
-const saveLog = () => localStorage.setItem('log', JSON.stringify(log.slice(-200)));
+const saveLog = () => localStorage.setItem('log', JSON.stringify(log.slice(-400)));
 
 async function loadOrders() {
   if (GS_URL.startsWith('DAN_')) { fillStyles(); return msg('Chưa điền GS_URL trong file index.html'); }
@@ -155,6 +199,7 @@ function pushRecent(o) {
 function showCur() {
   const o = orders[$('po').value];
   $('cur').textContent = o ? `Đang chọn: ${o.style} / PO ${o.po} / giao ${o.date || 'chưa có ngày'}` : 'Chưa chọn đơn';
+  renderViews();
 }
 function selectOrder(i) {
   const o = orders[i];
@@ -192,6 +237,48 @@ $('res').onclick = e => {
   if (d) { selectOrder(+d.dataset.i); $('q').value = ''; $('res').innerHTML = ''; }
 };
 
+// ---- Khung 4 góc: FP / PI / IN / FI / GT ----
+let curView = 0;          // vị trí góc đang chọn trong VIEWS
+let curResult = 'Accepted';
+
+$('cat').onchange = () => { localStorage.setItem('cat', $('cat').value); curView = 0; renderViews(); };
+
+function slotLog(o, cat, code) {
+  return log.filter(x => x.style === o.style && x.po === o.po && x.cat === cat && x.viewCode === code);
+}
+function renderViews() {
+  const cat = $('cat').value;
+  const box = $('views');
+  const on = isView(cat);
+  box.classList.toggle('show', on);
+  $('shoot').classList.toggle('off', false);
+  if (!on) { $('shoot').textContent = 'CHỤP ẢNH'; return; }
+
+  const o = orders[$('po').value];
+  const v = VIEWS[curView];
+  $('vhead').textContent = `${cat}: chọn góc rồi chụp. Mỗi góc có mã ${cat}1 - ${cat}4 để ghép vào báo cáo.`;
+  $('vgrid').innerHTML = VIEWS.map((w, i) => {
+    const code = cat + w.n;
+    const items = o ? slotLog(o, cat, code) : [];
+    const last = items[items.length - 1];
+    const cls = ['v'];
+    if (i === curView) cls.push('sel');
+    if (last) cls.push(last.result === 'Rejected' ? 'rej' : 'done');
+    return `<div class="${cls.join(' ')}" data-i="${i}">` +
+      `<span class="cnt">${items.length}</span>` +
+      `<b>${w.label}</b><small>${code}` + (last ? ` - ${last.result}` : '') + `</small></div>`;
+  }).join('');
+  $('bacc').classList.toggle('on', curResult === 'Accepted');
+  $('brej').classList.toggle('on', curResult === 'Rejected');
+  $('shoot').textContent = `CHỤP ${v.label.toUpperCase()} (${cat}${v.n})`;
+}
+$('vgrid').onclick = e => {
+  const d = e.target.closest('.v');
+  if (d) { curView = +d.dataset.i; renderViews(); }
+};
+$('bacc').onclick = () => { curResult = 'Accepted'; renderViews(); };
+$('brej').onclick = () => { curResult = 'Rejected'; renderViews(); };
+
 // ---- Chụp ----
 $('file').onchange = async e => {
   const f = e.target.files[0];
@@ -209,24 +296,35 @@ $('file').onchange = async e => {
   ctx.drawImage(img, 0, 0, c.width, c.height);
 
   const t = new Date(), cat = $('cat').value;
+  const view = isView(cat) ? VIEWS[curView] : null;
+  const viewCode = view ? cat + view.n : '';
+  const result = view ? curResult : '';
   const date = `${two(t.getDate())}/${two(t.getMonth()+1)}/${t.getFullYear()}`;
   const time = `${two(t.getHours())}:${two(t.getMinutes())}`;
   if ($('stamp').checked) {
     const fs = Math.round(c.width / 40);
     ctx.font = `bold ${fs}px sans-serif`; ctx.fillStyle = '#ffe600';
     ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
-    ctx.fillText(`${o.style} ${o.po} ${cat}  ${date} ${time}`, fs/2, c.height - fs/2);
+    const label = view ? `${cat} ${viewCode} ${view.key} ${result}` : cat;
+    ctx.fillText(`${o.style} ${o.po} ${label}  ${date} ${time}`, fs/2, c.height - fs/2);
   }
   const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
 
-  const stt = log.filter(x => x.style === o.style && x.po === o.po && x.cat === cat).length + 1;
+  const stt = log.filter(x => x.style === o.style && x.po === o.po && x.cat === cat && (x.viewCode || '') === viewCode).length + 1;
   const stamp = `${t.getFullYear()}${two(t.getMonth()+1)}${two(t.getDate())}_${two(t.getHours())}${two(t.getMinutes())}${two(t.getSeconds())}`;
-  const name = `${clean(o.style)}_${clean(o.po)}_${cat}_${String(stt).padStart(3,'0')}_${stamp}.jpg`;
+  // Tên file: STYLE_PO_CAT[_MÃ_GÓC_KẾTQUẢ]_STT_ngày_giờ.jpg
+  // Ví dụ: ST123_PO456_GT_GT1_Front_Accepted_001_20261119_101530.jpg
+  const catPart = view ? `${clean(cat)}_${viewCode}_${view.key}_${result}` : clean(cat);
+  const name = `${clean(o.style)}_${clean(o.po)}_${catPart}_${String(stt).padStart(3,'0')}_${stamp}.jpg`;
   const rec = {name, fca: $('fca').value, style: o.style, po: o.po, delivery: o.date,
-               cat, stt, note: $('note').value, date, time, link: '', status: 'Chờ gửi'};
+               cat, stt, note: $('note').value, date, time, link: '', status: 'Chờ gửi',
+               viewCode, view: view ? view.key : '', result};
   await tx('readwrite', st => st.put({name, rec, blob}));
-  log.push(rec); saveLog(); render();
+  log.push(rec); saveLog();
   $('note').value = '';
+  // Chụp xong tự nhảy sang góc tiếp theo, trả kết quả về Accepted
+  if (view) { curView = Math.min(curView + 1, VIEWS.length - 1); curResult = 'Accepted'; }
+  renderViews(); render();
   flush();
 };
 
@@ -259,12 +357,13 @@ addEventListener('online', flush);
 
 function render() {
   $('list').innerHTML = log.slice(-30).reverse().map(x =>
-    `<div class="it">${x.name}<br>` +
-    (x.link ? `<span class="ok">Đã lưu Drive</span> - <a href="${x.link}" target="_blank">mở ảnh</a>`
+    `<div class="it">${esc(x.name)}<br>` +
+    (x.viewCode ? `<b>${esc(x.viewCode)}</b> ${esc(x.view)} - <span class="${x.result === 'Rejected' ? 'no' : 'ok'}">${esc(x.result)}</span><br>` : '') +
+    (x.link ? `<span class="ok">Đã lưu Drive</span> - <a href="${esc(x.link)}" target="_blank">mở ảnh</a>`
             : `<span class="no">Chờ gửi</span>`) +
-    (x.note ? `<br>Ghi chú: ${x.note.replace(/</g, '&lt;')}` : '') + '</div>').join('');
+    (x.note ? `<br>Ghi chú: ${esc(x.note)}` : '') + '</div>').join('');
 }
-render(); loadOrders(); flush();
+renderViews(); render(); loadOrders(); flush();
 </script>
 </body>
 </html>
